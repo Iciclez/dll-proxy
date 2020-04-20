@@ -21,7 +21,7 @@ static inline PBYTE RvaAdjust(PIMAGE_DOS_HEADER pDosHeader, _In_ DWORD raddr)
 	return NULL;
 }
 
-uint64_t __stdcall get_module_exports_size(_In_ HMODULE hModule)
+uint64_t __stdcall get_module_export_size(_In_ HMODULE hModule)
 {
 	PIMAGE_DOS_HEADER pDosHeader = (PIMAGE_DOS_HEADER) hModule;
 	if (hModule == NULL)
@@ -92,7 +92,7 @@ BOOL __stdcall get_module_exports(_In_ HMODULE hModule, module_export_result_t *
 		return FALSE;
 	}
 
-	if (result_size != pExportDir->NumberOfFunctions) 
+	if (result_size != pExportDir->NumberOfFunctions)
 	{
 		return FALSE;
 	}
@@ -124,7 +124,7 @@ BOOL __stdcall get_module_exports(_In_ HMODULE hModule, module_export_result_t *
 		}
 
 		ULONG nOrdinal = pExportDir->Base + nFunc;
-		
+
 		printf("    %7d      %p %-30s\n", nOrdinal, pbCode, pszName ? pszName : "[NONAME]");
 
 		result[nFunc].nOrdinal = nOrdinal;
@@ -140,33 +140,36 @@ BOOL __stdcall get_module_exports(_In_ HMODULE hModule, module_export_result_t *
 import "C"
 import "unsafe"
 
-type module_export_result_t struct { 
-	Ordinal C.uint64_t; 
-	Code C.uint64_t;
-	Name *C.char;
+// CModuleExportResult : c struct representation for an export object
+type CModuleExportResult struct {
+	Ordinal C.uint64_t
+	Code    C.uint64_t
+	Name    *C.char
 }
 
+// ModuleExportResult : go struct representation for an export object
 type ModuleExportResult struct {
-	Ordinal uint64; 
-	Code uint64;
-	Name string;
+	Ordinal uint64
+	Code    uint64
+	Name    string
 }
 
-func GetModuleExports(pe_file *string) [] ModuleExportResult {
-	pe_file_string := C.CString(*pe_file)
-	handle := C.LoadLibraryA(pe_file_string)
+// GetModuleExports : returns the the exports for a win32 binary
+func GetModuleExports(executableFile *string) []ModuleExportResult {
+	executableFileCString := C.CString(*executableFile)
+	handle := C.LoadLibraryA(executableFileCString)
 
-	defer C.free(unsafe.Pointer(pe_file_string))
+	defer C.free(unsafe.Pointer(executableFileCString))
 
-	module_export_size := C.get_module_exports_size(handle)
-	module_export_result := make([]module_export_result_t, int(module_export_size))
-	C.get_module_exports(handle, (*C.module_export_result_t)(unsafe.Pointer(&module_export_result[0])), module_export_size)
+	moduleExportSize := C.get_module_export_size(handle)
+	moduleExportResults := make([]CModuleExportResult, int(moduleExportSize))
+	C.get_module_exports(handle, (*C.module_export_result_t)(unsafe.Pointer(&moduleExportResults[0])), moduleExportSize)
 
-	result := make([]ModuleExportResult, int(module_export_size))
-	for i := 0; i < int(module_export_size); i++ {
-		object := module_export_result[C.uint(i)]
-		result[i] = ModuleExportResult { Ordinal: uint64(object.Ordinal), Code: uint64(object.Code), Name: C.GoString(object.Name) }
+	result := make([]ModuleExportResult, int(moduleExportSize))
+	for i := 0; i < int(moduleExportSize); i++ {
+		object := moduleExportResults[C.uint(i)]
+		result[i] = ModuleExportResult{Ordinal: uint64(object.Ordinal), Code: uint64(object.Code), Name: C.GoString(object.Name)}
 	}
-	
+
 	return result
 }

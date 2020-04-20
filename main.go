@@ -1,23 +1,23 @@
 package main
 
 import (
-    "fmt"
 	"flag"
+	"fmt"
+	"io/ioutil"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
-	"path/filepath"
-	"io/ioutil"
 
 	"github.com/iciclez/dll-proxy/win32"
 )
 
-func create_org_data_file(name string, file_name string, input_dll_file string) string {
+func createOriginalDataFile(name string, fileName string, inputDllFile string) string {
 
 	var b strings.Builder
 
-	dll, err := ioutil.ReadFile(input_dll_file)
-    if err != nil {
+	dll, err := ioutil.ReadFile(inputDllFile)
+	if err != nil {
 		fmt.Println(err)
 		return ""
 	}
@@ -25,10 +25,10 @@ func create_org_data_file(name string, file_name string, input_dll_file string) 
 	fmt.Fprintf(&b, "#pragma once\n\n")
 	fmt.Fprintf(&b, "unsigned char %s_org_data[] = {", name)
 
-	for index, byte_at_index := range dll {
-		fmt.Fprintf(&b, "0x%.02x", byte_at_index)
+	for index, byteAtIndex := range dll {
+		fmt.Fprintf(&b, "0x%.02x", byteAtIndex)
 
-		if index != len(dll) - 1 {
+		if index != len(dll)-1 {
 			fmt.Fprintf(&b, ", ")
 		}
 	}
@@ -38,7 +38,7 @@ func create_org_data_file(name string, file_name string, input_dll_file string) 
 	return b.String()
 }
 
-func create_dllmain_file(name string, file_name string, dll_exports [] win32.ModuleExportResult) string {
+func createDllMainFile(name string, fileName string, dllExports []win32.ModuleExportResult) string {
 
 	var b strings.Builder
 
@@ -70,7 +70,7 @@ BOOL WINAPI DllMain(_In_ HINSTANCE hinstDLL, _In_ DWORD fdwReason, _In_ LPVOID l
 	return b.String()
 }
 
-func create_hpp_file(name string, file_name string, dll_exports [] win32.ModuleExportResult) string {
+func createHeaderFile(name string, fileName string, dllExports []win32.ModuleExportResult) string {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, `#pragma once
@@ -87,41 +87,37 @@ namespace %s
 	return b.String()
 }
 
-func create_cpp_file(name string, file_name string, dll_exports [] win32.ModuleExportResult, pack_original_dll bool) string {
+func createSourceFile(name string, fileName string, dllExports []win32.ModuleExportResult, packOriginalDll bool) string {
 
 	var b strings.Builder
 
 	/* include files */
-	fmt.Fprintf(&b, "#include \"%s\"\n", name + ".hpp")
+	fmt.Fprintf(&b, "#include \"%s\"\n", name+".hpp")
 	fmt.Fprintf(&b, "#include <windows.h>\n")
 	fmt.Fprintf(&b, "#include <strsafe.h>\n")
 
-	if pack_original_dll {
+	if packOriginalDll {
 		fmt.Fprintf(&b, "#include \"%s_org_data.hpp\"\n", name)
-
 	} else {
 		fmt.Fprintf(&b, "#include <shlobj.h>\n")
-
 	}
 
-	
 	fmt.Fprintf(&b, "\n")
 
 	/**/
-	fmt.Fprintf(&b, "const size_t %s_size = %d;\n", name, len(dll_exports))
-	fmt.Fprintf(&b,	"static FARPROC %s_functions[%s_size];\n", name, name)
-
+	fmt.Fprintf(&b, "const size_t %s_size = %d;\n", name, len(dllExports))
+	fmt.Fprintf(&b, "static FARPROC %s_functions[%s_size];\n", name, name)
 
 	fmt.Fprintf(&b, "\n")
 	/*asm codecave */
-	for _, export := range dll_exports {
+	for _, export := range dllExports {
 		fmt.Fprintf(&b, "/* [%.016X] %s:%d */\n", export.Code, name, export.Ordinal)
-		fmt.Fprintf(&b, "__declspec(naked) void %s_%s()\n{\n\t__asm jmp dword ptr [%s_functions + %d]\n}\n\n", name, export.Name, name, (export.Ordinal - 1) * 4)
+		fmt.Fprintf(&b, "__declspec(naked) void %s_%s()\n{\n\t__asm jmp dword ptr [%s_functions + %d]\n}\n\n", name, export.Name, name, (export.Ordinal-1)*4)
 	}
 
 	fmt.Fprintf(&b, "namespace %s\n{\n\tbool %s_initialize::initialize()\n\t{\n\t\tchar %s_path[MAX_PATH];\n\n", name, name, name)
 
-	if pack_original_dll {
+	if packOriginalDll {
 
 		fmt.Fprintf(&b, `
 		if (!SUCCEEDED(StringCchPrintf(%s_path, MAX_PATH, "%%s%%s", %s_path, "%s_data.dll")))
@@ -164,9 +160,9 @@ func create_cpp_file(name string, file_name string, dll_exports [] win32.ModuleE
 	fmt.Fprintf(&b, "\t\t{\n")
 	fmt.Fprintf(&b, "\t\t\treturn false;\n")
 	fmt.Fprintf(&b, "\t\t}\n\n")
-	
-	for _, export := range dll_exports {
-		fmt.Fprintf(&b, "\t\t%s_functions[%d] = GetProcAddress(%s_module, \"%s\");\n", name, export.Ordinal - 1, name, export.Name)
+
+	for _, export := range dllExports {
+		fmt.Fprintf(&b, "\t\t%s_functions[%d] = GetProcAddress(%s_module, \"%s\");\n", name, export.Ordinal-1, name, export.Name)
 	}
 
 	fmt.Fprintf(&b, `
@@ -186,37 +182,37 @@ func create_cpp_file(name string, file_name string, dll_exports [] win32.ModuleE
 	return b.String()
 }
 
-func create_def_file(name string, file_name string, dll_exports [] win32.ModuleExportResult) string {
+func createDefinitionFile(name string, fileName string, dllExports []win32.ModuleExportResult) string {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "LIBRARY \"%s\"\n\n", name)
 	fmt.Fprintf(&b, "EXPORTS\n")
 
-	for _, export := range dll_exports {
-		fmt.Fprintf(&b, "\t%s \t\t %s \t\t @%d \t PRIVATE\n", export.Name, "= " + name + "_" + export.Name, export.Ordinal)
+	for _, export := range dllExports {
+		fmt.Fprintf(&b, "\t%s \t\t %s \t\t @%d \t PRIVATE\n", export.Name, "= "+name+"_"+export.Name, export.Ordinal)
 	}
 
 	return b.String()
 }
 
-func create_dll_proxy(input_dll_file *string, output_directory *string, dll_main *bool, pack_original_dll *bool) {
+func createDllProxy(inputDllFile *string, outputDirectory *string, dllMain *bool, packOriginalDll *bool) {
 
-	var wait_group sync.WaitGroup
-	dll_exports := win32.GetModuleExports(input_dll_file)
+	var waitGroup sync.WaitGroup
+	dllExports := win32.GetModuleExports(inputDllFile)
 
 	// should be .dll
-	extension := filepath.Ext(*input_dll_file)
-	file_name := filepath.Base(*input_dll_file)
-	file_name = file_name[0:len(file_name) - len(extension)]
+	extension := filepath.Ext(*inputDllFile)
+	fileName := filepath.Base(*inputDllFile)
+	fileName = fileName[0 : len(fileName)-len(extension)]
 
-	if *pack_original_dll {
+	if *packOriginalDll {
 
-		wait_group.Add(1)
+		waitGroup.Add(1)
 
-		go func(name string, file_name string, input_dll_file string) {
-			defer wait_group.Done()
+		go func(name string, fileName string, inputDllFile string) {
+			defer waitGroup.Done()
 
-			f, err := os.Create(file_name)
+			f, err := os.Create(fileName)
 			if err != nil {
 				fmt.Println(err)
 				return
@@ -224,25 +220,25 @@ func create_dll_proxy(input_dll_file *string, output_directory *string, dll_main
 
 			defer f.Close()
 
-			result := create_org_data_file(name, file_name, input_dll_file)
+			result := createOriginalDataFile(name, fileName, inputDllFile)
 
 			_, err = f.WriteString(result)
 			if err != nil {
 				fmt.Println(err)
 				return
-			}    
-		}(file_name, filepath.Join(*output_directory, file_name + "_org_data.hpp"), *input_dll_file)
+			}
+		}(fileName, filepath.Join(*outputDirectory, fileName+"_org_data.hpp"), *inputDllFile)
 
 	}
 
-	if *dll_main {
+	if *dllMain {
 
-		wait_group.Add(1)
+		waitGroup.Add(1)
 
-		go func(name string, file_name string, dll_exports [] win32.ModuleExportResult) {
-			defer wait_group.Done()
+		go func(name string, fileName string, dllExports []win32.ModuleExportResult) {
+			defer waitGroup.Done()
 
-			f, err := os.Create(file_name)
+			f, err := os.Create(fileName)
 			if err != nil {
 				fmt.Println(err)
 				return
@@ -250,24 +246,24 @@ func create_dll_proxy(input_dll_file *string, output_directory *string, dll_main
 
 			defer f.Close()
 
-			result := create_dllmain_file(name, file_name, dll_exports)
+			result := createDllMainFile(name, fileName, dllExports)
 
 			_, err = f.WriteString(result)
 			if err != nil {
 				fmt.Println(err)
 				return
-			}    
+			}
 
-		}(file_name, filepath.Join(*output_directory, "dllmain.cpp"), dll_exports)
+		}(fileName, filepath.Join(*outputDirectory, "dllmain.cpp"), dllExports)
 
 	}
 
-	wait_group.Add(3)
+	waitGroup.Add(3)
 
-	go func(name string, file_name string, dll_exports [] win32.ModuleExportResult) {
-		defer wait_group.Done()
+	go func(name string, fileName string, dllExports []win32.ModuleExportResult) {
+		defer waitGroup.Done()
 
-		f, err := os.Create(file_name)
+		f, err := os.Create(fileName)
 		if err != nil {
 			fmt.Println(err)
 			return
@@ -275,19 +271,19 @@ func create_dll_proxy(input_dll_file *string, output_directory *string, dll_main
 
 		defer f.Close()
 
-		result := create_hpp_file(name, file_name, dll_exports)
+		result := createHeaderFile(name, fileName, dllExports)
 
 		_, err = f.WriteString(result)
 		if err != nil {
 			fmt.Println(err)
 			return
-		}    
-	}(file_name, filepath.Join(*output_directory, file_name + ".hpp"), dll_exports)
+		}
+	}(fileName, filepath.Join(*outputDirectory, fileName+".hpp"), dllExports)
 
-	go func(name string, file_name string, dll_exports [] win32.ModuleExportResult, pack_original_dll bool) {
-		defer wait_group.Done()
+	go func(name string, fileName string, dllExports []win32.ModuleExportResult, packOriginalDll bool) {
+		defer waitGroup.Done()
 
-		f, err := os.Create(file_name)
+		f, err := os.Create(fileName)
 		if err != nil {
 			fmt.Println(err)
 			return
@@ -295,7 +291,7 @@ func create_dll_proxy(input_dll_file *string, output_directory *string, dll_main
 
 		defer f.Close()
 
-		result := create_cpp_file(name, file_name, dll_exports, pack_original_dll)
+		result := createSourceFile(name, fileName, dllExports, packOriginalDll)
 
 		_, err = f.WriteString(result)
 		if err != nil {
@@ -303,12 +299,12 @@ func create_dll_proxy(input_dll_file *string, output_directory *string, dll_main
 			return
 		}
 
-	}(file_name, filepath.Join(*output_directory, file_name + ".cpp"), dll_exports, *pack_original_dll)
+	}(fileName, filepath.Join(*outputDirectory, fileName+".cpp"), dllExports, *packOriginalDll)
 
-	go func(name string, file_name string, dll_exports [] win32.ModuleExportResult) {
-		defer wait_group.Done()
+	go func(name string, fileName string, dllExports []win32.ModuleExportResult) {
+		defer waitGroup.Done()
 
-		f, err := os.Create(file_name)
+		f, err := os.Create(fileName)
 		if err != nil {
 			fmt.Println(err)
 			return
@@ -316,25 +312,25 @@ func create_dll_proxy(input_dll_file *string, output_directory *string, dll_main
 
 		defer f.Close()
 
-		result := create_def_file(name, file_name, dll_exports)
+		result := createDefinitionFile(name, fileName, dllExports)
 
 		_, err = f.WriteString(result)
 		if err != nil {
 			fmt.Println(err)
 			return
-		}   
+		}
 
-	}(file_name, filepath.Join(*output_directory, file_name + ".def"), dll_exports)
+	}(fileName, filepath.Join(*outputDirectory, fileName+".def"), dllExports)
 
-	wait_group.Wait()	
+	waitGroup.Wait()
 }
 
-func print_usage() {
+func printUsage() {
 	fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
 	flag.PrintDefaults()
 }
 
-func handle_flags() {
+func handleFlags() {
 
 	i := flag.String("i", "", "[required] input dll file")
 	o := flag.String("o", "", "[optional] output directory")
@@ -343,62 +339,62 @@ func handle_flags() {
 	m := flag.Bool("dll_main", false, "[optional] create dllmain.cpp file (default: false)")
 
 	flag.Parse()
-	
+
 	/* check input flag */
 
 	if len(*i) == 0 {
 		fmt.Println("error: input dll file empty")
-		print_usage()
+		printUsage()
 		return
 	}
 
-	input_file_information, err := os.Stat(*i)
-    if err != nil {
+	inputFileInformation, err := os.Stat(*i)
+	if err != nil {
 		fmt.Println(err)
-        return
+		return
 	}
 
-	if !input_file_information.Mode().IsRegular() || !strings.HasSuffix(*i, ".dll") {
+	if !inputFileInformation.Mode().IsRegular() || !strings.HasSuffix(*i, ".dll") {
 		fmt.Println("error: incorrect flag types")
-		print_usage()
-		return 
+		printUsage()
+		return
 	}
 
 	/* check output flag */
 
 	if len(*o) == 0 {
-		current_directory, err := os.Getwd()
+		currentDirectory, err := os.Getwd()
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
-		
-		output_directory := filepath.Join(current_directory, *i)
-		output_directory = strings.TrimSuffix(output_directory, filepath.Ext(output_directory))
 
-		if _, err := os.Stat(output_directory); os.IsNotExist(err) {
-			os.Mkdir(output_directory, os.ModeDir)
+		outputDirectory := filepath.Join(currentDirectory, *i)
+		outputDirectory = strings.TrimSuffix(outputDirectory, filepath.Ext(outputDirectory))
+
+		if _, err := os.Stat(outputDirectory); os.IsNotExist(err) {
+			os.Mkdir(outputDirectory, os.ModeDir)
 		}
-		
-		create_dll_proxy(i, &output_directory, m, p)
+
+		createDllProxy(i, &outputDirectory, m, p)
 		return
 	}
 
-	output_directory_information, err := os.Stat(*o)
+	outputDirectoryInformation, err := os.Stat(*o)
 	if err != nil {
 		fmt.Println(err)
-        return
-	}
-
-	if !output_directory_information.Mode().IsDir() {
-		fmt.Println("error: incorrect flag types")
-		print_usage()
 		return
 	}
 
-    create_dll_proxy(i, o, m, p)
+	if !outputDirectoryInformation.Mode().IsDir() {
+		fmt.Println("error: incorrect flag types")
+		printUsage()
+		return
+	}
+
+	createDllProxy(i, o, m, p)
 }
 
 func main() {
-	handle_flags()
+	handleFlags()
 }
