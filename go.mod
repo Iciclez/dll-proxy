@@ -1,3 +1,3 @@
 module github.com/iciclez/dll-proxy
 
-go 1.14
+go 1.16
